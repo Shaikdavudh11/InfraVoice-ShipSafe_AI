@@ -1,0 +1,6 @@
+{
+  "name": "InfraVoice — ShipSafe AI",
+  "description": "Talk to your infrastructure. Ship with confidence. AI-assisted deployment risk scanning and Kubernetes incident workspace.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
