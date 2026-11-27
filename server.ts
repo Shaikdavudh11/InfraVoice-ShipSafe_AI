@@ -11,9 +11,32 @@ import { scanUploadedFiles } from './src/lib/shipsafe/scan-engine.ts';
 import { getAiConfig, isAiConfigured } from './src/lib/ai/ai-config.ts';
 import { AiServiceError } from './src/lib/ai/gemini-client.ts';
 import { checkRateLimit } from './src/lib/ai/rate-limiter.ts';
+import { z } from 'zod';
 import { runInfraVoiceChat } from './src/lib/ai/services/chat-service.ts';
 import { analyzeShipSafeScan } from './src/lib/ai/services/shipsafe-ai-service.ts';
 import { investigateIncident } from './src/lib/ai/services/incident-ai-service.ts';
+import {
+  approveAndStartRecovery,
+  getSimulationEvents,
+  getSimulationState,
+  resetSimulationEnvironment,
+  triggerIncidentScenario,
+} from './src/lib/simulation/state-manager.ts';
+import { investigateActiveSimulationIncident } from './src/lib/simulation/investigation-service.ts';
+
+const TriggerScenarioRequestSchema = z.object({
+  scenarioId: z.enum([
+    'crashloop_backoff',
+    'probe_misconfiguration',
+    'resource_pressure',
+  ]),
+});
+
+const ResetSimulationRequestSchema = z.object({
+  confirmed: z.literal(true, {
+    error: 'Explicit confirmation (confirmed: true) is required to reset simulation.',
+  }),
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,7 +55,8 @@ function getClientRateKey(req: express.Request, scope: string): string {
     typeof forwarded === 'string'
       ? forwarded.split(',')[0].trim()
       : req.ip || req.socket?.remoteAddress || 'local';
-  return `${scope}:${rawIp}`;
+  const normalizedIp = rawIp.replace(/[^a-zA-Z0-9.:_-]/g, '').slice(0, 64) || 'local';
+  return `${scope}:${normalizedIp}`;
 }
 
 function handleAiRouteError(res: express.Response, err: unknown) {
@@ -54,6 +78,15 @@ function handleAiRouteError(res: express.Response, err: unknown) {
 export function createApp() {
   const app = express();
   app.disable('x-powered-by');
+
+  // Defensive security headers (omits X-Frame-Options so embedded preview iframe works cleanly)
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Permissions-Policy', 'camera=(), geolocation=()');
+    next();
+  });
+
   app.use(express.json({ limit: '512kb' }));
 
   app.get('/api/health', (_req, res) => {
@@ -75,6 +108,15 @@ export function createApp() {
   });
 
   app.post('/api/shipsafe/scan', (req, res) => {
+    const limit = checkRateLimit(getClientRateKey(req, 'shipsafe-scan'), 40, 60_000);
+    if (!limit.allowed) {
+      res.setHeader('Retry-After', String(limit.retryAfterSeconds));
+      res.status(429).json({
+        error: `Too many scan requests. Please wait ${limit.retryAfterSeconds}s before scanning again.`,
+      });
+      return;
+    }
+
     // Reject overly large Content-Length upfront before buffering
     const contentLength = Number(req.headers['content-length'] || 0);
     if (contentLength > MAX_TOTAL_SIZE_BYTES + 64 * 1024) {
@@ -204,6 +246,113 @@ export function createApp() {
     } catch (err) {
       handleAiRouteError(res, err);
     }
+  });
+
+  // =========================================================================
+  // Phase 4: Isolated Incident Simulation & Safe Recovery APIs (Simulation-Only)
+  // =========================================================================
+  app.get('/api/simulation/state', (_req, res) => {
+    res.status(200).json(getSimulationState());
+  });
+
+  app.get('/api/simulation/events', (_req, res) => {
+    res.status(200).json({
+      simulated: true,
+      events: getSimulationEvents(),
+    });
+  });
+
+  app.post('/api/simulation/trigger', (req, res) => {
+    const limit = checkRateLimit(getClientRateKey(req, 'sim-mutate'), 40, 60_000);
+    if (!limit.allowed) {
+      res.setHeader('Retry-After', String(limit.retryAfterSeconds));
+      res.status(429).json({
+        error: `Too many simulation triggers. Please wait ${limit.retryAfterSeconds}s.`,
+      });
+      return;
+    }
+
+    const parsed = TriggerScenarioRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error:
+          'Invalid scenarioId. Expected one of: crashloop_backoff, probe_misconfiguration, resource_pressure.',
+      });
+      return;
+    }
+
+    const nextState = triggerIncidentScenario(parsed.data.scenarioId);
+    res.status(200).json(nextState);
+  });
+
+  app.post('/api/simulation/investigate', async (req, res) => {
+    const cfg = getAiConfig();
+    const limit = checkRateLimit(
+      getClientRateKey(req, 'sim-investigate'),
+      cfg.rateLimitMaxRequests,
+      cfg.rateLimitWindowMs
+    );
+    if (!limit.allowed) {
+      res.setHeader('Retry-After', String(limit.retryAfterSeconds));
+      res.status(429).json({
+        error: `Too many investigation requests. Please wait ${limit.retryAfterSeconds}s.`,
+        code: 'RATE_LIMITED',
+        retryable: true,
+      });
+      return;
+    }
+
+    try {
+      const outcome = await investigateActiveSimulationIncident();
+      res.status(200).json(outcome);
+    } catch (err) {
+      handleAiRouteError(res, err);
+    }
+  });
+
+  app.post('/api/simulation/remediation/approve', (req, res) => {
+    const limit = checkRateLimit(getClientRateKey(req, 'sim-approve'), 30, 60_000);
+    if (!limit.allowed) {
+      res.setHeader('Retry-After', String(limit.retryAfterSeconds));
+      res.status(429).json({
+        error: `Too many remediation approval requests. Please wait ${limit.retryAfterSeconds}s.`,
+      });
+      return;
+    }
+
+    const outcome = approveAndStartRecovery(req.body);
+    if (!outcome.ok) {
+      res.status(outcome.statusCode).json({ error: outcome.error });
+      return;
+    }
+
+    res.status(200).json({
+      simulated: true,
+      actionRecord: outcome.actionRecord,
+      state: outcome.state,
+    });
+  });
+
+  app.post('/api/simulation/reset', (req, res) => {
+    const limit = checkRateLimit(getClientRateKey(req, 'sim-reset'), 30, 60_000);
+    if (!limit.allowed) {
+      res.setHeader('Retry-After', String(limit.retryAfterSeconds));
+      res.status(429).json({
+        error: `Too many simulation reset requests. Please wait ${limit.retryAfterSeconds}s.`,
+      });
+      return;
+    }
+
+    const parsed = ResetSimulationRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: 'Explicit confirmation (confirmed: true) is required to reset simulation.',
+      });
+      return;
+    }
+
+    const resetState = resetSimulationEnvironment();
+    res.status(200).json(resetState);
   });
 
   // Body parser & generic error guard — never expose stack traces

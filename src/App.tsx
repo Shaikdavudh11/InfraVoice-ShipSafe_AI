@@ -11,6 +11,7 @@ import { InfraVoicePage } from './pages/InfraVoicePage';
 import { OverviewPage } from './pages/OverviewPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ShipSafePage } from './pages/ShipSafePage';
+import { SimulationPage } from './pages/SimulationPage';
 
 function RouteView() {
   const { route } = useApp();
@@ -22,6 +23,8 @@ function RouteView() {
       return <InfraVoicePage />;
     case '/incidents':
       return <IncidentsPage />;
+    case '/simulation':
+      return <SimulationPage />;
     case '/history':
       return <HistoryPage />;
     case '/settings':

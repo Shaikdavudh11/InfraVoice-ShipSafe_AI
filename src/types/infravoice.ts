@@ -3,6 +3,7 @@ export type AppRoute =
   | '/shipsafe'
   | '/infravoice'
   | '/incidents'
+  | '/simulation'
   | '/history'
   | '/settings';
 

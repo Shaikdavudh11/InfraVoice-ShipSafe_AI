@@ -146,7 +146,7 @@ export async function analyzeShipSafeScan(rawInput: unknown): Promise<ShipSafeAn
     systemInstruction: SHIPSAFE_ANALYSIS_SYSTEM_PROMPT,
     responseMimeType: 'application/json',
     responseSchema: SHIPSAFE_ANALYSIS_RESPONSE_SCHEMA,
-    thinkingLevel: ThinkingLevel.HIGH,
+    thinkingLevel: ThinkingLevel.MEDIUM,
   });
 
   let check = parseAndValidateAnalysis(firstResponse.text || '');

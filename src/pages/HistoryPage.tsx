@@ -15,7 +15,12 @@ import { SCAN_HISTORY_RECORDS } from '../data/mockData';
 import type { ScanHistoryRecord, ScanStatus } from '../types/infravoice';
 
 export function HistoryPage() {
-  const { activeWorkspace, navigate } = useApp();
+  const {
+    activeWorkspace,
+    navigate,
+    sessionScanHistory,
+    setLatestScanResult,
+  } = useApp();
 
   const [statusFilter, setStatusFilter] = useState<'all' | ScanStatus>('all');
   const [workspaceOnly, setWorkspaceOnly] = useState(false);
@@ -24,8 +29,46 @@ export function HistoryPage() {
   const [sortAsc, setSortAsc] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<ScanHistoryRecord | null>(null);
 
+  const combinedRecords = useMemo<ScanHistoryRecord[]>(() => {
+    const liveRecords: ScanHistoryRecord[] = sessionScanHistory.map((scan) => {
+      const status: ScanStatus =
+        scan.severityCounts.critical > 0 || scan.riskScore >= 60
+          ? 'blocked'
+          : scan.totalFindings > 0
+            ? 'needs_review'
+            : 'passed';
+      const uniqueTypes = Array.from(new Set(scan.fileSummaries.map((f) => f.fileType)));
+      return {
+        id: scan.scanId,
+        workspaceId: activeWorkspace.id,
+        repository: `live-session / ${scan.fileSummaries[0]?.fileName ?? 'uploaded-files'}`,
+        branch: 'local-upload',
+        commitSha: scan.scanId.slice(-7),
+        fileTypes: uniqueTypes.length > 0 ? uniqueTypes : ['config'],
+        scannedAt: new Date(scan.timestamp).toLocaleTimeString('en-IN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+        }),
+        duration: `${scan.scanDurationMs}ms`,
+        riskScore: scan.riskScore,
+        status,
+        findings: {
+          critical: scan.severityCounts.critical,
+          high: scan.severityCounts.high,
+          medium: scan.severityCounts.medium,
+          low: scan.severityCounts.low,
+        },
+        triggeredBy: 'Live Session Scan',
+      };
+    });
+
+    return [...liveRecords, ...SCAN_HISTORY_RECORDS];
+  }, [sessionScanHistory, activeWorkspace.id]);
+
   const filteredRecords = useMemo(() => {
-    const list = SCAN_HISTORY_RECORDS.filter((rec) => {
+    const list = combinedRecords.filter((rec) => {
       const wsMatch = !workspaceOnly || rec.workspaceId === activeWorkspace.id;
       const stMatch = statusFilter === 'all' || rec.status === statusFilter;
       const q = searchQuery.trim().toLowerCase();
@@ -46,7 +89,7 @@ export function HistoryPage() {
         ? a.scannedAt.localeCompare(b.scannedAt)
         : b.scannedAt.localeCompare(a.scannedAt);
     });
-  }, [activeWorkspace.id, workspaceOnly, statusFilter, searchQuery, sortBy, sortAsc]);
+  }, [combinedRecords, activeWorkspace.id, workspaceOnly, statusFilter, searchQuery, sortBy, sortAsc]);
 
   const toggleSort = (col: 'date' | 'risk') => {
     if (sortBy === col) {
@@ -330,6 +373,10 @@ export function HistoryPage() {
               <button
                 type="button"
                 onClick={() => {
+                  const liveMatch = sessionScanHistory.find((s) => s.scanId === selectedRecord.id);
+                  if (liveMatch) {
+                    setLatestScanResult(liveMatch);
+                  }
                   setSelectedRecord(null);
                   navigate('/shipsafe');
                 }}

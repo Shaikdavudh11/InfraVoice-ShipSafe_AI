@@ -185,11 +185,15 @@ export async function generateWithRetry(
     try {
       const config: GenerateContentParameters['config'] = {
         systemInstruction: options.systemInstruction,
-        maxOutputTokens: options.maxOutputTokens ?? cfg.maxOutputTokens,
         thinkingConfig: {
           thinkingLevel: options.thinkingLevel ?? ThinkingLevel.LOW,
         },
       };
+
+      const maxTokens = options.maxOutputTokens ?? cfg.maxOutputTokens;
+      if (typeof maxTokens === 'number' && maxTokens > 0) {
+        config.maxOutputTokens = maxTokens;
+      }
 
       if (options.responseMimeType) {
         config.responseMimeType = options.responseMimeType;

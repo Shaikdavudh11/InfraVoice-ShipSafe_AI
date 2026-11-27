@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Activity,
   AlertOctagon,
   Bell,
   Check,
@@ -29,6 +30,7 @@ const NAV_ITEMS: NavItem[] = [
   { route: '/', label: 'Overview', shortLabel: 'Overview', icon: LayoutDashboard },
   { route: '/shipsafe', label: 'ShipSafe — Security', shortLabel: 'ShipSafe', icon: ShieldCheck },
   { route: '/infravoice', label: 'InfraVoice — Assistant', shortLabel: 'InfraVoice', icon: MessageSquareCode },
+  { route: '/simulation', label: 'Incident Simulation', shortLabel: 'Simulation', icon: Activity },
   { route: '/incidents', label: 'Incident Center', shortLabel: 'Incidents', icon: AlertOctagon },
   { route: '/history', label: 'Scan History', shortLabel: 'History', icon: History },
   { route: '/settings', label: 'Settings', shortLabel: 'Settings', icon: Settings },
@@ -216,14 +218,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           )}
         </nav>
 
-        {/* Preview Notice (when expanded) */}
+        {/* Simulation Boundary Notice (when expanded) */}
         {!collapsed && (
           <div className="px-3.5 py-2.5 mx-2.5 mb-2 rounded-lg border border-slate-200 dark:border-white/[0.06] bg-slate-50 dark:bg-white/[0.02]">
             <p className="text-[11px] font-medium text-slate-700 dark:text-zinc-300">
-              Preview Workspace
+              Simulated Environment
             </p>
             <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-0.5 leading-snug">
-              Simulated cluster telemetry. Live Gemini & cloud connectors arrive in Phase 2.
+              Deterministic ShipSafe scanner, Gemini AI reasoning, and isolated simulation recovery. No real cluster connected.
             </p>
           </div>
         )}

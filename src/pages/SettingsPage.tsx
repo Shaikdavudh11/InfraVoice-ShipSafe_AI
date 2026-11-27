@@ -1,7 +1,13 @@
-import { useState } from 'react';
-import { Bell, Cpu, Moon, Palette, Save, Server, Sun } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Bell, CheckCircle2, Cpu, Moon, Palette, Save, Server, Sun } from 'lucide-react';
 import { Surface } from '../components/ui/Surface';
 import { useApp } from '../context/AppContext';
+
+interface AiRuntimeStatus {
+  configured: boolean;
+  provider: string;
+  model: string;
+}
 
 export function SettingsPage() {
   const {
@@ -13,8 +19,9 @@ export function SettingsPage() {
     showToast,
   } = useApp();
 
+  const [aiStatus, setAiStatus] = useState<AiRuntimeStatus | null>(null);
   const [workspaceDisplayName, setWorkspaceDisplayName] = useState(activeWorkspace.name);
-  const [defaultNamespace, setDefaultNamespace] = useState('payments-prod');
+  const [defaultNamespace, setDefaultNamespace] = useState('payments');
   const [retentionDays, setRetentionDays] = useState('30');
 
   const [voiceLocale, setVoiceLocale] = useState('en-IN');
@@ -25,9 +32,26 @@ export function SettingsPage() {
   const [notifIncidents, setNotifIncidents] = useState(true);
   const [notifDigest, setNotifDigest] = useState(false);
 
+  useEffect(() => {
+    let active = true;
+    fetch('/api/ai/status')
+      .then((res) => res.json())
+      .then((data: AiRuntimeStatus) => {
+        if (active) setAiStatus(data);
+      })
+      .catch(() => {
+        if (active) {
+          setAiStatus({ configured: false, provider: 'gemini-developer-api', model: 'unavailable' });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    showToast('Preferences saved locally for this Phase 1A preview');
+    showToast('Workspace and UI preferences saved for this session');
   };
 
   return (
@@ -38,7 +62,7 @@ export function SettingsPage() {
             Settings
           </h1>
           <p className="text-[13px] text-slate-500 dark:text-zinc-400 mt-0.5">
-            Configure workspace defaults, appearance, notifications, and Phase 2 AI preview options.
+            Inspect active Gemini server status and configure workspace defaults, appearance, and notification preferences.
           </p>
         </div>
 
@@ -130,19 +154,36 @@ export function SettingsPage() {
         </div>
       </Surface>
 
-      {/* AI Configuration Placeholder */}
+      {/* AI & Voice Configuration */}
       <Surface className="p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-white/[0.06]">
           <div className="flex items-center gap-2">
             <Cpu className="w-4 h-4 text-emerald-500" aria-hidden="true" />
             <h2 className="text-sm font-semibold text-slate-900 dark:text-zinc-100">
-              AI & Voice Configuration
+              AI &amp; Voice Configuration
             </h2>
           </div>
-          <span className="text-[11px] text-slate-500 dark:text-zinc-400">
-            Backend Gemini orchestration scheduled for Phase 2
-          </span>
+          {aiStatus && (
+            <span
+              className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[11px] font-mono ${
+                aiStatus.configured
+                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'
+                  : 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300'
+              }`}
+            >
+              {aiStatus.configured && <CheckCircle2 className="w-3 h-3" />}
+              <span>
+                {aiStatus.configured
+                  ? `${aiStatus.model} · ${aiStatus.provider}`
+                  : 'Server AI credentials not configured'}
+              </span>
+            </span>
+          )}
         </div>
+
+        <p className="text-xs text-slate-500 dark:text-zinc-400">
+          Gemini API authentication is managed strictly server-side via platform secrets. Credentials are never exposed to or editable from the browser.
+        </p>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1.5">
@@ -319,7 +360,7 @@ export function SettingsPage() {
               Weekly cluster posture & cost digest
             </span>
             <span className="block text-slate-500 dark:text-zinc-400">
-              Summary email scheduled Mondays at 09:00 IST (Phase 2 integration).
+              Local session preference for weekly posture digest alerts (email delivery not connected).
             </span>
           </span>
           <input

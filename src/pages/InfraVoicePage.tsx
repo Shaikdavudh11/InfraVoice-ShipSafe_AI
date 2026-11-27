@@ -60,6 +60,7 @@ export function InfraVoicePage() {
     pendingChatLaunch,
     clearPendingVoicePrompt,
     latestScanResult,
+    simulationState,
     selectedIncidentId,
     navigate,
     showToast,
@@ -118,13 +119,111 @@ export function InfraVoicePage() {
   useEffect(() => {
     if (latestScanResult) {
       setAttachScan(true);
+    } else {
+      setAttachScan(false);
     }
   }, [latestScanResult]);
 
-  const attachedIncident = useMemo(() => {
-    if (attachedIncidentId === 'none') return null;
-    return INCIDENTS.find((i) => i.id === attachedIncidentId) || null;
-  }, [attachedIncidentId]);
+  // Build normalized context payload for active simulated incident so Gemini sees real simulated pods/logs/events
+  const simulatedIncidentContext = useMemo(() => {
+    const activeSim = simulationState?.activeIncident;
+    if (!simulationState || !activeSim) return null;
+    const rawEvidenceText = JSON.stringify(
+      {
+        simulatedEnvironment: true,
+        cluster: simulationState.cluster.name,
+        deployment: {
+          name: simulationState.deployment.name,
+          namespace: simulationState.deployment.namespace,
+          readyReplicas: simulationState.deployment.readyReplicas,
+          desiredReplicas: simulationState.deployment.desiredReplicas,
+          config: simulationState.deployment.config,
+        },
+        pods: simulationState.pods.map((p) => ({
+          name: p.name,
+          phase: p.phase,
+          ready: p.ready,
+          restarts: p.restarts,
+          lastReason: p.lastReason,
+        })),
+        metrics: simulationState.metrics,
+      },
+      null,
+      2
+    );
+
+    return {
+      id: activeSim.id,
+      title: `[SIMULATED] ${activeSim.title}`,
+      severity: activeSim.severity,
+      status: activeSim.status,
+      affectedService: simulationState.deployment.name,
+      namespace: simulationState.deployment.namespace,
+      timestamp: activeSim.triggeredAt,
+      summary: activeSim.summary,
+      timeline: simulationState.events.slice(-12).map((e) => ({
+        timestamp: e.displayTime,
+        source: e.source,
+        title: e.title,
+        detail: e.detail,
+      })),
+      logs: simulationState.logs.slice(-15).map((l) => ({
+        timestamp: l.timestamp,
+        level: l.level,
+        pod: l.pod,
+        message: l.message,
+      })),
+      rawEvidenceText,
+    };
+  }, [simulationState]);
+
+  // Clear stale simulated incident attachment if simulation was reset
+  useEffect(() => {
+    if (
+      attachedIncidentId.startsWith('SIM-INC-') &&
+      simulationState?.activeIncident?.id !== attachedIncidentId
+    ) {
+      setAttachedIncidentId('none');
+    }
+  }, [attachedIncidentId, simulationState?.activeIncident?.id]);
+
+  const resolveIncidentById = (id: string) => {
+    if (id === 'none') return null;
+    if (simulatedIncidentContext && simulatedIncidentContext.id === id) {
+      return simulatedIncidentContext;
+    }
+    const mockInc = INCIDENTS.find((i) => i.id === id);
+    if (!mockInc) return null;
+    return {
+      id: mockInc.id,
+      title: mockInc.title,
+      severity: mockInc.severity,
+      status: mockInc.status,
+      affectedService: mockInc.affectedService,
+      namespace: mockInc.namespace,
+      timestamp: mockInc.timestamp,
+      summary: mockInc.summary,
+      timeline: mockInc.timeline.map((t) => ({
+        timestamp: t.timestamp,
+        source: t.source,
+        title: t.title,
+        detail: t.detail,
+      })),
+      logs: mockInc.logs.map((l) => ({
+        timestamp: l.timestamp,
+        level: l.level,
+        pod: l.pod,
+        message: l.message,
+      })),
+      rawEvidenceText: undefined as string | undefined,
+    };
+  };
+
+  const attachedIncident = useMemo(
+    () => resolveIncidentById(attachedIncidentId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [attachedIncidentId, simulatedIncidentContext]
+  );
 
   const quickActions = useMemo(() => {
     const base: Array<{ label: string; prompt: string; hint: string }> = [];
@@ -195,6 +294,7 @@ export function InfraVoicePage() {
       contextType?: InfraVoiceLaunchContextType;
       attachScanOverride?: boolean;
       incidentIdOverride?: string;
+      freshConversation?: boolean;
     }
   ) => {
     const trimmed = text.trim();
@@ -202,10 +302,18 @@ export function InfraVoicePage() {
 
     const effectiveContextType = overrideOptions?.contextType ?? contextType;
     const effectiveAttachScan = overrideOptions?.attachScanOverride ?? attachScan;
-    const effectiveIncident =
-      overrideOptions?.incidentIdOverride && overrideOptions.incidentIdOverride !== 'none'
-        ? INCIDENTS.find((i) => i.id === overrideOptions.incidentIdOverride) || null
-        : attachedIncident;
+    const effectiveIncidentId =
+      overrideOptions?.incidentIdOverride !== undefined
+        ? overrideOptions.incidentIdOverride
+        : attachedIncidentId;
+    const effectiveIncident = resolveIncidentById(effectiveIncidentId);
+    const activeConversationId = overrideOptions?.freshConversation
+      ? `conv-${Date.now()}`
+      : conversationId;
+
+    if (overrideOptions?.freshConversation) {
+      setConversationId(activeConversationId);
+    }
 
     const now = new Date().toLocaleTimeString('en-IN', {
       hour: '2-digit',
@@ -220,12 +328,14 @@ export function InfraVoicePage() {
       content: trimmed,
     };
 
-    const historyForApi = messages
-      .filter((m) => !m.isError)
-      .slice(-8)
-      .map((m) => ({ role: m.role, content: m.content }));
+    const historyForApi = overrideOptions?.freshConversation
+      ? []
+      : messages
+          .filter((m) => !m.isError)
+          .slice(-8)
+          .map((m) => ({ role: m.role, content: m.content }));
 
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => (overrideOptions?.freshConversation ? [userMsg] : [...prev, userMsg]));
     setInputValue('');
     if (voiceState === 'ready') setVoiceState('idle');
     setIsResponding(true);
@@ -236,36 +346,13 @@ export function InfraVoicePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: trimmed,
-          conversationId,
+          conversationId: activeConversationId,
           contextType: effectiveContextType,
           language,
           workspaceName: activeWorkspace.name,
           history: historyForApi,
           scanResult: effectiveAttachScan && latestScanResult ? latestScanResult : null,
-          incident: effectiveIncident
-            ? {
-                id: effectiveIncident.id,
-                title: effectiveIncident.title,
-                severity: effectiveIncident.severity,
-                status: effectiveIncident.status,
-                affectedService: effectiveIncident.affectedService,
-                namespace: effectiveIncident.namespace,
-                timestamp: effectiveIncident.timestamp,
-                summary: effectiveIncident.summary,
-                timeline: effectiveIncident.timeline.map((t) => ({
-                  timestamp: t.timestamp,
-                  source: t.source,
-                  title: t.title,
-                  detail: t.detail,
-                })),
-                logs: effectiveIncident.logs.map((l) => ({
-                  timestamp: l.timestamp,
-                  level: l.level,
-                  pod: l.pod,
-                  message: l.message,
-                })),
-              }
-            : null,
+          incident: effectiveIncident,
           artifactText: artifactText.trim() || null,
         }),
       });
@@ -316,20 +403,19 @@ export function InfraVoicePage() {
     const launch = pendingChatLaunch;
     clearPendingVoicePrompt();
 
-    if (launch.contextType) {
-      setContextType(launch.contextType);
-    }
-    if (launch.attachScan) {
-      setAttachScan(true);
-    }
-    if (launch.incidentId) {
-      setAttachedIncidentId(launch.incidentId);
-    }
+    const nextContextType = launch.contextType ?? 'general';
+    const nextAttachScan = Boolean(launch.attachScan);
+    const nextIncidentId = launch.incidentId ?? 'none';
+
+    setContextType(nextContextType);
+    setAttachScan(nextAttachScan);
+    setAttachedIncidentId(nextIncidentId);
 
     sendMessage(launch.prompt, {
-      contextType: launch.contextType,
-      attachScanOverride: launch.attachScan,
-      incidentIdOverride: launch.incidentId,
+      contextType: nextContextType,
+      attachScanOverride: nextAttachScan,
+      incidentIdOverride: nextIncidentId,
+      freshConversation: true,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingChatLaunch]);
@@ -868,16 +954,31 @@ export function InfraVoicePage() {
             <select
               id="incident-context-select"
               value={attachedIncidentId}
-              onChange={(e) => setAttachedIncidentId(e.target.value)}
+              onChange={(e) => {
+                const nextId = e.target.value;
+                if (nextId !== attachedIncidentId && messages.length > 0) {
+                  // Isolate incident contexts so prior incident turns cannot leak into the newly selected incident
+                  setMessages([]);
+                  setConversationId(`conv-${Date.now()}`);
+                }
+                setAttachedIncidentId(nextId);
+              }}
               className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0F1216] text-xs text-slate-800 dark:text-zinc-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
             >
               <option value="none">No incident attached</option>
+              {simulatedIncidentContext && (
+                <option value={simulatedIncidentContext.id}>
+                  [SIMULATED] {simulatedIncidentContext.id} — {simulatedIncidentContext.affectedService} (
+                  {simulatedIncidentContext.severity})
+                </option>
+              )}
               {INCIDENTS.map((inc) => (
                 <option key={inc.id} value={inc.id}>
                   {inc.id} — {inc.affectedService} ({inc.severity})
                 </option>
               ))}
               {selectedIncidentId &&
+                selectedIncidentId !== simulatedIncidentContext?.id &&
                 !INCIDENTS.some((i) => i.id === selectedIncidentId) && (
                   <option value={selectedIncidentId}>{selectedIncidentId}</option>
                 )}
@@ -886,7 +987,16 @@ export function InfraVoicePage() {
             {attachedIncident && (
               <div className="pt-1 space-y-1 text-[11px] text-slate-600 dark:text-zinc-400">
                 <div className="flex items-center justify-between">
-                  <SeverityLabel severity={attachedIncident.severity} />
+                  <SeverityLabel
+                    severity={
+                      attachedIncident.severity === 'critical' ||
+                      attachedIncident.severity === 'high' ||
+                      attachedIncident.severity === 'medium' ||
+                      attachedIncident.severity === 'low'
+                        ? attachedIncident.severity
+                        : 'medium'
+                    }
+                  />
                   <span className="font-mono">{attachedIncident.namespace}</span>
                 </div>
                 <p className="text-slate-700 dark:text-zinc-300 leading-snug">

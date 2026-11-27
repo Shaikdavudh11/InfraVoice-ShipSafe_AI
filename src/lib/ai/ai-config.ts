@@ -6,7 +6,7 @@ export interface AiConfig {
   hasApiKey: boolean;
   hasVertexCredentials: boolean;
   requestTimeoutMs: number;
-  maxOutputTokens: number;
+  maxOutputTokens?: number;
   maxHistoryMessages: number;
   maxContextChars: number;
   maxToolIterations: number;
@@ -42,6 +42,9 @@ export function getAiConfig(): AiConfig {
   const hasVertexCredentials = Boolean(
     useVertexAi && gcpProject && (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.K_SERVICE)
   );
+  const parsedMaxTokens = process.env.AI_MAX_OUTPUT_TOKENS
+    ? Number(process.env.AI_MAX_OUTPUT_TOKENS)
+    : undefined;
 
   return {
     model: resolveModelId(process.env.GEMINI_MODEL),
@@ -50,8 +53,11 @@ export function getAiConfig(): AiConfig {
     gcpLocation,
     hasApiKey,
     hasVertexCredentials,
-    requestTimeoutMs: Number(process.env.AI_TIMEOUT_MS || 28000),
-    maxOutputTokens: Number(process.env.AI_MAX_OUTPUT_TOKENS || 4096),
+    requestTimeoutMs: Number(process.env.AI_TIMEOUT_MS || 45000),
+    maxOutputTokens:
+      parsedMaxTokens && Number.isFinite(parsedMaxTokens) && parsedMaxTokens > 0
+        ? parsedMaxTokens
+        : undefined,
     maxHistoryMessages: 8,
     maxContextChars: 12000,
     maxToolIterations: 4,

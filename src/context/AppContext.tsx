@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { INITIAL_NOTIFICATIONS, WORKSPACES } from '../data/mockData';
 import type { AppRoute, NotificationItem, Severity, Workspace } from '../types/infravoice';
 import type { ShipSafeScanResult } from '../lib/shipsafe/types';
+import type { SimulationStateSnapshot } from '../lib/simulation/types';
 
 export type InfraVoiceLaunchContextType =
   | 'general'
@@ -24,6 +25,7 @@ const VALID_ROUTES: AppRoute[] = [
   '/shipsafe',
   '/infravoice',
   '/incidents',
+  '/simulation',
   '/history',
   '/settings',
 ];
@@ -58,6 +60,10 @@ interface AppContextValue {
   ) => void;
   latestScanResult: ShipSafeScanResult | null;
   setLatestScanResult: (scan: ShipSafeScanResult | null) => void;
+  sessionScanHistory: ShipSafeScanResult[];
+  simulationState: SimulationStateSnapshot | null;
+  setSimulationState: (next: SimulationStateSnapshot | null) => void;
+  refreshSimulationState: () => Promise<SimulationStateSnapshot | null>;
   selectedIncidentId: string;
   setSelectedIncidentId: (id: string) => void;
   openIncident: (id: string) => void;
@@ -79,10 +85,52 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>(INITIAL_NOTIFICATIONS);
   const [pendingChatLaunch, setPendingChatLaunch] = useState<PendingChatLaunch | null>(null);
-  const [latestScanResult, setLatestScanResult] = useState<ShipSafeScanResult | null>(null);
+  const [latestScanResult, setLatestScanResultState] = useState<ShipSafeScanResult | null>(null);
+  const [sessionScanHistory, setSessionScanHistory] = useState<ShipSafeScanResult[]>([]);
+  const [simulationState, setSimulationState] = useState<SimulationStateSnapshot | null>(null);
   const [selectedIncidentId, setSelectedIncidentId] = useState<string>('INC-2041');
   const [shipSafeInitialSeverity, setShipSafeInitialSeverity] = useState<Severity | 'all'>('all');
   const [toast, setToast] = useState<string | null>(null);
+
+  const setLatestScanResult = useCallback((scan: ShipSafeScanResult | null) => {
+    setLatestScanResultState(scan);
+    if (scan) {
+      setSessionScanHistory((prev) => [
+        scan,
+        ...prev.filter((item) => item.scanId !== scan.scanId),
+      ].slice(0, 20));
+    }
+  }, []);
+
+  const refreshSimulationState = useCallback(async (): Promise<SimulationStateSnapshot | null> => {
+    try {
+      const res = await fetch('/api/simulation/state');
+      if (!res.ok) return null;
+      const data = (await res.json()) as SimulationStateSnapshot;
+      setSimulationState(data);
+      return data;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshSimulationState();
+  }, [refreshSimulationState]);
+
+  useEffect(() => {
+    const isTransitioning =
+      simulationState?.cluster.status === 'recovering' ||
+      simulationState?.recoveryStage === 'applying_config' ||
+      simulationState?.recoveryStage === 'restarting_pods' ||
+      simulationState?.recoveryStage === 'verifying';
+    if (!isTransitioning) return;
+
+    const id = window.setInterval(() => {
+      void refreshSimulationState();
+    }, 450);
+    return () => window.clearInterval(id);
+  }, [simulationState?.cluster.status, simulationState?.recoveryStage, refreshSimulationState]);
 
   useEffect(() => {
     const onPopState = () => {
@@ -185,6 +233,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     askInfraVoice,
     latestScanResult,
     setLatestScanResult,
+    sessionScanHistory,
+    simulationState,
+    setSimulationState,
+    refreshSimulationState,
     selectedIncidentId,
     setSelectedIncidentId,
     openIncident,

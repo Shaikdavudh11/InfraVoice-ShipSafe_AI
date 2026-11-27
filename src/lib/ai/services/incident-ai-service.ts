@@ -134,7 +134,7 @@ export async function investigateIncident(rawInput: unknown): Promise<IncidentIn
     systemInstruction: INCIDENT_INVESTIGATION_SYSTEM_PROMPT,
     responseMimeType: 'application/json',
     responseSchema: INCIDENT_INVESTIGATION_RESPONSE_SCHEMA,
-    thinkingLevel: ThinkingLevel.HIGH,
+    thinkingLevel: ThinkingLevel.MEDIUM,
   });
 
   let check = parseAndValidateReport(firstResponse.text || '');

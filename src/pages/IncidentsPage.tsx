@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import {
+  Activity,
   AlertOctagon,
+  ArrowRight,
   Check,
   Clock,
   Copy,
@@ -28,7 +30,14 @@ interface IncidentAiResponsePayload {
 }
 
 export function IncidentsPage() {
-  const { selectedIncidentId, setSelectedIncidentId, askInfraVoice, showToast } = useApp();
+  const {
+    selectedIncidentId,
+    setSelectedIncidentId,
+    askInfraVoice,
+    showToast,
+    simulationState,
+    navigate,
+  } = useApp();
 
   const [incidents, setIncidents] = useState<Incident[]>(INCIDENTS);
   const [statusFilter, setStatusFilter] = useState<'all' | IncidentStatus>('all');
@@ -188,7 +197,54 @@ export function IncidentsPage() {
             Investigate Kubernetes and deployment failures with correlated timelines, logs, and recovery commands.
           </p>
         </div>
+
+        <button
+          type="button"
+          onClick={() => navigate('/simulation')}
+          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-emerald-500/35 bg-emerald-500/10 hover:bg-emerald-500/15 text-xs font-medium text-emerald-700 dark:text-emerald-300 transition-colors self-start sm:self-auto whitespace-nowrap cursor-pointer"
+        >
+          <Activity className="w-3.5 h-3.5" />
+          <span>Open Incident Simulation</span>
+        </button>
       </div>
+
+      {/* Live Simulated Incident Reflection */}
+      {simulationState?.activeIncident && (
+        <Surface className="p-4 border-emerald-500/30 bg-emerald-500/[0.04] flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="px-2 py-0.5 rounded font-mono text-[10px] font-semibold uppercase bg-emerald-600 text-white">
+                SIMULATED ENVIRONMENT
+              </span>
+              <span className="font-mono font-semibold text-slate-900 dark:text-zinc-100">
+                {simulationState.activeIncident.id}
+              </span>
+              <SeverityLabel severity={simulationState.activeIncident.severity} />
+              <span className="font-mono text-slate-500 dark:text-zinc-400 capitalize">
+                status: {simulationState.activeIncident.status}
+              </span>
+              <span className="font-mono text-slate-500 dark:text-zinc-400">
+                pods: {simulationState.deployment.readyReplicas}/
+                {simulationState.deployment.desiredReplicas} ready
+              </span>
+            </div>
+            <div className="text-sm font-semibold text-slate-900 dark:text-zinc-100">
+              {simulationState.activeIncident.title} — {simulationState.cluster.name}
+            </div>
+            <p className="text-xs text-slate-600 dark:text-zinc-300">
+              {simulationState.activeIncident.summary}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/simulation')}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-medium text-white transition-colors whitespace-nowrap shrink-0 self-start md:self-center cursor-pointer"
+          >
+            <span>Inspect &amp; Recover</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </Surface>
+      )}
 
       {/* Filters Bar */}
       <Surface className="p-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3">

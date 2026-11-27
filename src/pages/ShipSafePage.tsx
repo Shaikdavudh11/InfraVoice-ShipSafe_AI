@@ -455,7 +455,7 @@ export function ShipSafePage() {
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".yaml,.yml,.tf,.dockerfile,.dockerignore,Dockerfile,.env"
+              accept=".yaml,.yml,.tf,.dockerfile,.dockerignore,Dockerfile"
               onChange={(e) => {
                 addBrowserFiles(e.target.files);
                 e.target.value = '';
