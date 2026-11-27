@@ -11,10 +11,10 @@ import type {
 } from '../types/infravoice';
 
 export const CURRENT_USER = {
-  name: 'Aarav Mehta',
+  name: 'Shaik Davudh',
   role: 'Staff Site Reliability Engineer',
-  email: 'aarav.mehta@shipsafe-demo.dev',
-  initials: 'AM',
+  email: 'shaik.davudh@shipsafe-demo.dev',
+  initials: 'SD',
   avatarUrl: '/src/assets/images/avatar_engineer_profile_1795759857850.jpg',
 };
 
@@ -1207,6 +1207,6 @@ export const SCAN_HISTORY_RECORDS: ScanHistoryRecord[] = [
     riskScore: 68,
     findings: { critical: 1, high: 3, medium: 2, low: 0 },
     status: 'blocked',
-    triggeredBy: 'Aarav Mehta',
+    triggeredBy: 'Shaik Davudh',
   },
 ];

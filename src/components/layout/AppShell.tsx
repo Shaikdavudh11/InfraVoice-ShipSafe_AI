@@ -296,7 +296,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
             <div className="min-w-0 flex items-center gap-2 text-[13px]">
               <span className="hidden sm:inline text-slate-500 dark:text-zinc-400 whitespace-nowrap">
-                {route === '/' ? `${getGreeting()}, Aarav` : currentNav.shortLabel}
+                {route === '/' ? `${getGreeting()}, Shaik Davudh` : currentNav.shortLabel}
               </span>
               <span className="hidden sm:inline text-slate-300 dark:text-zinc-700" aria-hidden="true">
                 /
