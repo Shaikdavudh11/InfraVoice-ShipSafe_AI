@@ -137,11 +137,23 @@ export interface EvidenceItem {
   severity?: Severity;
 }
 
+export interface ChatMessageToolTrace {
+  tool: string;
+  label: string;
+  status: 'completed' | 'rejected';
+  summary: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   timestamp: string;
   content: string;
+  model?: string;
+  toolActivity?: ChatMessageToolTrace[];
+  contextSummary?: string[];
+  isError?: boolean;
+  retryPrompt?: string;
   structured?: {
     summary: string;
     causes: string[];

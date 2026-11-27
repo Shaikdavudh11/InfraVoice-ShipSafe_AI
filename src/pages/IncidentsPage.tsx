@@ -1,10 +1,14 @@
 import { useMemo, useState } from 'react';
 import {
   AlertOctagon,
+  Check,
   Clock,
+  Copy,
   GitCommit,
   MessageSquareCode,
+  RefreshCw,
   Search,
+  Sparkles,
   Terminal,
 } from 'lucide-react';
 import { CodeBlock } from '../components/ui/CodeBlock';
@@ -13,7 +17,15 @@ import { EmptyState } from '../components/ui/States';
 import { Surface } from '../components/ui/Surface';
 import { useApp } from '../context/AppContext';
 import { INCIDENTS } from '../data/mockData';
+import type { IncidentInvestigationReport } from '../lib/ai/schemas/ai-response';
 import type { Incident, IncidentStatus, Severity } from '../types/infravoice';
+
+interface IncidentAiResponsePayload {
+  incidentId: string;
+  model: string;
+  investigatedAt: string;
+  report: IncidentInvestigationReport;
+}
 
 export function IncidentsPage() {
   const { selectedIncidentId, setSelectedIncidentId, askInfraVoice, showToast } = useApp();
@@ -22,8 +34,17 @@ export function IncidentsPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | IncidentStatus>('all');
   const [severityFilter, setSeverityFilter] = useState<'all' | Severity>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [detailTab, setDetailTab] = useState<'timeline' | 'logs' | 'root_cause' | 'recovery'>('timeline');
+  const [detailTab, setDetailTab] = useState<
+    'timeline' | 'logs' | 'root_cause' | 'recovery' | 'ai_investigation'
+  >('timeline');
   const [logLevelFilter, setLogLevelFilter] = useState<'ALL' | 'ERROR' | 'WARN' | 'INFO'>('ALL');
+  const [rawEvidenceInput, setRawEvidenceInput] = useState('');
+  const [showEvidenceInput, setShowEvidenceInput] = useState(false);
+
+  const [aiReports, setAiReports] = useState<Record<string, IncidentAiResponsePayload>>({});
+  const [isInvestigating, setIsInvestigating] = useState(false);
+  const [aiError, setAiError] = useState<{ message: string; retryable: boolean } | null>(null);
+  const [copiedReportId, setCopiedReportId] = useState<string | null>(null);
 
   const filteredIncidents = useMemo(() => {
     return incidents.filter((inc) => {
@@ -60,6 +81,100 @@ export function IncidentsPage() {
     if (logLevelFilter === 'ALL') return activeIncident.logs;
     return activeIncident.logs.filter((l) => l.level === logLevelFilter);
   }, [activeIncident, logLevelFilter]);
+
+  const activeAiReport = activeIncident ? aiReports[activeIncident.id] : undefined;
+
+  const runIncidentInvestigation = async () => {
+    if (!activeIncident || isInvestigating) return;
+    setDetailTab('ai_investigation');
+    setIsInvestigating(true);
+    setAiError(null);
+
+    try {
+      const response = await fetch('/api/incidents/investigate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          incident: {
+            id: activeIncident.id,
+            title: activeIncident.title,
+            severity: activeIncident.severity,
+            status: activeIncident.status,
+            affectedService: activeIncident.affectedService,
+            namespace: activeIncident.namespace,
+            timestamp: activeIncident.timestamp,
+            summary: activeIncident.summary,
+            timeline: activeIncident.timeline.map((t) => ({
+              timestamp: t.timestamp,
+              source: t.source,
+              title: t.title,
+              detail: t.detail,
+            })),
+            logs: activeIncident.logs.map((l) => ({
+              timestamp: l.timestamp,
+              level: l.level,
+              pod: l.pod,
+              message: l.message,
+            })),
+            rawEvidenceText: rawEvidenceInput.trim() || undefined,
+          },
+        }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok) {
+        setAiError({
+          message: payload?.error || 'Unable to generate incident investigation report.',
+          retryable: Boolean(payload?.retryable ?? true),
+        });
+        return;
+      }
+
+      setAiReports((prev) => ({
+        ...prev,
+        [activeIncident.id]: payload as IncidentAiResponsePayload,
+      }));
+      showToast(`Gemini investigation ready for ${activeIncident.id}`);
+    } catch {
+      setAiError({
+        message: 'Unable to reach Incident Intelligence API. Verify server connectivity and retry.',
+        retryable: true,
+      });
+    } finally {
+      setIsInvestigating(false);
+    }
+  };
+
+  const handleCopyReport = async () => {
+    if (!activeIncident || !activeAiReport) return;
+    const { report } = activeAiReport;
+    const text = [
+      `Incident Investigation: ${activeIncident.id} (${activeIncident.affectedService})`,
+      `Severity Estimate: ${report.severityEstimate}`,
+      '',
+      `Summary: ${report.incidentSummary}`,
+      '',
+      'Confirmed Evidence:',
+      ...report.confirmedEvidence.map((e) => `- ${e}`),
+      '',
+      'Inferred Causes:',
+      ...report.inferredCauses.map((c) => `- [${c.confidence}] ${c.cause} (${c.supportingEvidence})`),
+      '',
+      'Unverified Hypotheses:',
+      ...report.unverifiedHypotheses.map((h) => `- ${h}`),
+      '',
+      'Verification Steps:',
+      ...report.verificationSteps.map((v, idx) => `${idx + 1}. ${v}`),
+    ].join('\n');
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedReportId(activeIncident.id);
+      window.setTimeout(() => setCopiedReportId(null), 1800);
+    } catch {
+      showToast('Clipboard permission unavailable');
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -204,18 +319,31 @@ export function IncidentsPage() {
                     </span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() =>
-                      askInfraVoice(
-                        `Investigate ${activeIncident.id}: ${activeIncident.title} affecting ${activeIncident.affectedService}.`
-                      )
-                    }
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/[0.08] text-xs font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-white/[0.05] transition-colors whitespace-nowrap cursor-pointer"
-                  >
-                    <MessageSquareCode className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>Ask InfraVoice</span>
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={runIncidentInvestigation}
+                      disabled={isInvestigating}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-xs font-medium text-white transition-colors whitespace-nowrap cursor-pointer"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>{isInvestigating ? 'Investigating...' : 'Investigate with Gemini'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        askInfraVoice(
+                          `Investigate ${activeIncident.id}: ${activeIncident.title} affecting ${activeIncident.affectedService}. Walk me through confirmed evidence and safe diagnostic steps.`,
+                          { contextType: 'incident', incidentId: activeIncident.id }
+                        )
+                      }
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/[0.08] text-xs font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-white/[0.05] transition-colors whitespace-nowrap cursor-pointer"
+                    >
+                      <MessageSquareCode className="w-3.5 h-3.5 text-emerald-500" />
+                      <span>Ask InfraVoice</span>
+                    </button>
+                  </div>
                 </div>
 
                 <h2 className="text-lg font-semibold text-slate-900 dark:text-zinc-100">
@@ -251,6 +379,29 @@ export function IncidentsPage() {
                 </div>
               </div>
 
+              {/* Optional Pasted Evidence Drawer */}
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEvidenceInput((v) => !v)}
+                  className="text-xs font-medium text-slate-600 dark:text-zinc-400 hover:text-emerald-500 transition-colors cursor-pointer"
+                >
+                  {showEvidenceInput
+                    ? 'Hide additional log / kubectl output input'
+                    : '+ Attach additional logs or kubectl describe output (optional)'}
+                </button>
+                {showEvidenceInput && (
+                  <textarea
+                    rows={4}
+                    value={rawEvidenceInput}
+                    onChange={(e) => setRawEvidenceInput(e.target.value)}
+                    placeholder="Paste real kubectl describe pod, pod logs, or deployment events here before running Investigate with Gemini..."
+                    aria-label="Additional incident log or kubectl evidence"
+                    className="w-full p-3 rounded-lg border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#090B0E] font-mono text-xs text-slate-900 dark:text-zinc-100 placeholder:text-slate-400 dark:placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500"
+                  />
+                )}
+              </div>
+
               {/* Detail Section Tabs */}
               <div className="flex flex-wrap items-center gap-1 p-1 rounded-lg bg-slate-100 dark:bg-white/[0.04]">
                 {(
@@ -259,6 +410,7 @@ export function IncidentsPage() {
                     { id: 'logs', label: 'Logs' },
                     { id: 'root_cause', label: 'Root Cause' },
                     { id: 'recovery', label: 'Recovery Actions' },
+                    { id: 'ai_investigation', label: 'Gemini Report' },
                   ] as const
                 ).map((tab) => (
                   <button
@@ -416,6 +568,231 @@ export function IncidentsPage() {
                       <CodeBlock code={act.command} label="Suggested command" />
                     </div>
                   ))}
+                </div>
+              )}
+
+              {detailTab === 'ai_investigation' && (
+                <div className="space-y-4">
+                  {isInvestigating && (
+                    <div className="p-4 rounded-lg border border-slate-200 dark:border-white/[0.08] bg-slate-50/70 dark:bg-[#090B0E] space-y-3 animate-pulse">
+                      <div className="text-xs text-slate-500 dark:text-zinc-400">
+                        Gemini SRE engine correlating timeline events and log signals...
+                      </div>
+                      <div className="h-3.5 w-3/4 rounded bg-slate-200 dark:bg-white/[0.08]" />
+                      <div className="h-3 w-full rounded bg-slate-200/70 dark:bg-white/[0.05]" />
+                      <div className="h-3 w-2/3 rounded bg-slate-200/70 dark:bg-white/[0.05]" />
+                    </div>
+                  )}
+
+                  {aiError && !isInvestigating && (
+                    <div
+                      role="alert"
+                      className="p-4 rounded-lg border border-red-500/25 bg-red-500/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    >
+                      <div className="text-xs text-red-600 dark:text-red-400">
+                        <div className="font-semibold">Incident Investigation Failed</div>
+                        <p className="mt-0.5">{aiError.message}</p>
+                      </div>
+                      {aiError.retryable && (
+                        <button
+                          type="button"
+                          onClick={runIncidentInvestigation}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/30 bg-white dark:bg-[#090B0E] text-xs font-medium text-red-600 dark:text-red-300 hover:bg-red-500/10 shrink-0 cursor-pointer"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>Retry</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {!isInvestigating && !aiError && !activeAiReport && (
+                    <EmptyState
+                      icon={Sparkles}
+                      title="No Gemini investigation run for this incident yet"
+                      description="Click Investigate with Gemini above to separate confirmed log evidence from inferred causes, unverified hypotheses, and safe verification commands."
+                      actionLabel="Investigate with Gemini"
+                      onAction={runIncidentInvestigation}
+                    />
+                  )}
+
+                  {!isInvestigating && activeAiReport && (
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-white/[0.06]">
+                        <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-zinc-400">
+                          <SeverityLabel severity={activeAiReport.report.severityEstimate} />
+                          <span className="font-mono">Model: {activeAiReport.model}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleCopyReport}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-200 dark:border-white/[0.08] text-xs text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-white/[0.04] cursor-pointer"
+                          >
+                            {copiedReportId === activeIncident.id ? (
+                              <>
+                                <Check className="w-3.5 h-3.5 text-emerald-500" />
+                                <span>Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3.5 h-3.5" />
+                                <span>Copy Report</span>
+                              </>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={runIncidentInvestigation}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-200 dark:border-white/[0.08] text-xs text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-white/[0.04] cursor-pointer"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            <span>Re-run</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="p-3.5 rounded-lg border border-slate-200 dark:border-white/[0.06] bg-slate-50/70 dark:bg-[#090B0E] space-y-1.5">
+                        <div className="text-xs font-semibold text-slate-800 dark:text-zinc-200">
+                          Incident Summary
+                        </div>
+                        <p className="text-[13px] text-slate-700 dark:text-zinc-300 leading-relaxed">
+                          {activeAiReport.report.incidentSummary}
+                        </p>
+                      </div>
+
+                      {/* Strict Epistemic Separation: Confirmed vs Inferred vs Unverified */}
+                      <div className="grid grid-cols-1 gap-3">
+                        <div className="p-3.5 rounded-lg border border-emerald-500/25 bg-emerald-500/[0.04] space-y-1.5">
+                          <div className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                            Confirmed Evidence (Observed in Logs / Timeline)
+                          </div>
+                          <ul className="list-disc pl-4 space-y-1 text-xs text-slate-700 dark:text-zinc-300">
+                            {activeAiReport.report.confirmedEvidence.map((ev, i) => (
+                              <li key={i}>{ev}</li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        <div className="p-3.5 rounded-lg border border-amber-500/25 bg-amber-500/[0.04] space-y-2">
+                          <div className="text-xs font-semibold text-amber-700 dark:text-amber-300">
+                            Inferred Probable Causes
+                          </div>
+                          <div className="space-y-2">
+                            {activeAiReport.report.inferredCauses.map((c, i) => (
+                              <div key={i} className="text-xs space-y-0.5">
+                                <div className="flex items-center gap-2 font-medium text-slate-900 dark:text-zinc-100">
+                                  <span className="px-1.5 py-0.5 rounded font-mono text-[10px] uppercase bg-amber-500/15 text-amber-600 dark:text-amber-300">
+                                    {c.confidence} confidence
+                                  </span>
+                                  <span>{c.cause}</span>
+                                </div>
+                                <p className="text-slate-600 dark:text-zinc-400">
+                                  Supporting signal: {c.supportingEvidence}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {activeAiReport.report.unverifiedHypotheses.length > 0 && (
+                          <div className="p-3.5 rounded-lg border border-slate-200 dark:border-white/[0.08] bg-slate-50/70 dark:bg-[#090B0E] space-y-1.5">
+                            <div className="text-xs font-semibold text-slate-700 dark:text-zinc-200">
+                              Unverified Hypotheses (Needs Diagnostic Confirmation)
+                            </div>
+                            <ul className="list-disc pl-4 space-y-1 text-xs text-slate-600 dark:text-zinc-300">
+                              {activeAiReport.report.unverifiedHypotheses.map((h, i) => (
+                                <li key={i}>{h}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Diagnostic Commands */}
+                      {activeAiReport.report.recommendedInvestigationSteps.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="text-xs font-semibold text-slate-800 dark:text-zinc-200">
+                            Read-Only Diagnostic Steps
+                          </div>
+                          {activeAiReport.report.recommendedInvestigationSteps.map((st, idx) => (
+                            <div
+                              key={idx}
+                              className="p-3.5 rounded-lg border border-slate-200 dark:border-white/[0.06] bg-slate-50/70 dark:bg-[#090B0E] space-y-2"
+                            >
+                              <div className="text-xs font-medium text-slate-900 dark:text-zinc-100">
+                                {idx + 1}. {st.step}
+                              </div>
+                              {st.command && <CodeBlock code={st.command} label="Diagnostic command" />}
+                              <div className="text-[11px] text-slate-500 dark:text-zinc-400">
+                                Risk note: {st.riskNote}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Immediate Mitigation */}
+                      {activeAiReport.report.immediateMitigation.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="text-xs font-semibold text-slate-800 dark:text-zinc-200">
+                            Safe Immediate Mitigation (Requires Engineer Approval)
+                          </div>
+                          {activeAiReport.report.immediateMitigation.map((m, idx) => (
+                            <div
+                              key={idx}
+                              className="p-3.5 rounded-lg border border-slate-200 dark:border-white/[0.06] bg-slate-50/70 dark:bg-[#090B0E] space-y-2"
+                            >
+                              <div className="text-xs font-medium text-slate-900 dark:text-zinc-100">
+                                {m.action}
+                              </div>
+                              {m.command && <CodeBlock code={m.command} label="Mitigation command" />}
+                              <div className="text-[11px] text-amber-600 dark:text-amber-400">
+                                Safety check: {m.safetyNote}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Prevention & Verification */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                        <div className="p-3.5 rounded-lg border border-slate-200 dark:border-white/[0.06] bg-slate-50/70 dark:bg-[#090B0E] space-y-1.5">
+                          <div className="font-semibold text-slate-800 dark:text-zinc-200">
+                            Post-Mitigation Verification
+                          </div>
+                          <ul className="list-disc pl-4 space-y-1 text-slate-600 dark:text-zinc-300">
+                            {activeAiReport.report.verificationSteps.map((vs, idx) => (
+                              <li key={idx}>{vs}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div className="p-3.5 rounded-lg border border-slate-200 dark:border-white/[0.06] bg-slate-50/70 dark:bg-[#090B0E] space-y-1.5">
+                          <div className="font-semibold text-slate-800 dark:text-zinc-200">
+                            Long-Term Prevention
+                          </div>
+                          <ul className="list-disc pl-4 space-y-1 text-slate-600 dark:text-zinc-300">
+                            {activeAiReport.report.longTermPrevention.map((lp, idx) => (
+                              <li key={idx}>{lp}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+
+                      {activeAiReport.report.missingEvidenceQuestions.length > 0 && (
+                        <div className="p-3 rounded-lg border border-slate-200 dark:border-white/[0.06] bg-slate-50/50 dark:bg-[#090B0E] text-xs space-y-1">
+                          <div className="font-semibold text-slate-700 dark:text-zinc-200">
+                            Additional Evidence Needed
+                          </div>
+                          <ul className="list-disc pl-4 space-y-0.5 text-slate-500 dark:text-zinc-400">
+                            {activeAiReport.report.missingEvidenceQuestions.map((q, idx) => (
+                              <li key={idx}>{q}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </Surface>

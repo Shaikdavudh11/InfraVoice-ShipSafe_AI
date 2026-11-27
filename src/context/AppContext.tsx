@@ -1,6 +1,23 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { INITIAL_NOTIFICATIONS, WORKSPACES } from '../data/mockData';
 import type { AppRoute, NotificationItem, Severity, Workspace } from '../types/infravoice';
+import type { ShipSafeScanResult } from '../lib/shipsafe/types';
+
+export type InfraVoiceLaunchContextType =
+  | 'general'
+  | 'shipsafe'
+  | 'incident'
+  | 'kubernetes'
+  | 'docker'
+  | 'terraform'
+  | 'cicd';
+
+export interface PendingChatLaunch {
+  prompt: string;
+  contextType?: InfraVoiceLaunchContextType;
+  incidentId?: string;
+  attachScan?: boolean;
+}
 
 const VALID_ROUTES: AppRoute[] = [
   '/',
@@ -33,8 +50,14 @@ interface AppContextValue {
   markNotificationRead: (id: string) => void;
   markAllNotificationsRead: () => void;
   pendingVoicePrompt: string | null;
+  pendingChatLaunch: PendingChatLaunch | null;
   clearPendingVoicePrompt: () => void;
-  askInfraVoice: (prompt: string) => void;
+  askInfraVoice: (
+    prompt: string,
+    options?: Omit<PendingChatLaunch, 'prompt'>
+  ) => void;
+  latestScanResult: ShipSafeScanResult | null;
+  setLatestScanResult: (scan: ShipSafeScanResult | null) => void;
   selectedIncidentId: string;
   setSelectedIncidentId: (id: string) => void;
   openIncident: (id: string) => void;
@@ -55,7 +78,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>(INITIAL_NOTIFICATIONS);
-  const [pendingVoicePrompt, setPendingVoicePrompt] = useState<string | null>(null);
+  const [pendingChatLaunch, setPendingChatLaunch] = useState<PendingChatLaunch | null>(null);
+  const [latestScanResult, setLatestScanResult] = useState<ShipSafeScanResult | null>(null);
   const [selectedIncidentId, setSelectedIncidentId] = useState<string>('INC-2041');
   const [shipSafeInitialSeverity, setShipSafeInitialSeverity] = useState<Severity | 'all'>('all');
   const [toast, setToast] = useState<string | null>(null);
@@ -93,15 +117,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const askInfraVoice = useCallback(
-    (prompt: string) => {
-      setPendingVoicePrompt(prompt);
+    (prompt: string, options?: Omit<PendingChatLaunch, 'prompt'>) => {
+      if (options?.incidentId) {
+        setSelectedIncidentId(options.incidentId);
+      }
+      setPendingChatLaunch({ prompt, ...options });
       navigate('/infravoice');
     },
     [navigate]
   );
 
   const clearPendingVoicePrompt = useCallback(() => {
-    setPendingVoicePrompt(null);
+    setPendingChatLaunch(null);
   }, []);
 
   const openIncident = useCallback(
@@ -152,9 +179,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     unreadCount,
     markNotificationRead,
     markAllNotificationsRead,
-    pendingVoicePrompt,
+    pendingVoicePrompt: pendingChatLaunch?.prompt ?? null,
+    pendingChatLaunch,
     clearPendingVoicePrompt,
     askInfraVoice,
+    latestScanResult,
+    setLatestScanResult,
     selectedIncidentId,
     setSelectedIncidentId,
     openIncident,

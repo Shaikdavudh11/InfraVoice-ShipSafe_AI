@@ -1,13 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   Download,
   FileCode2,
+  MessageSquareCode,
   Play,
+  RefreshCw,
   Search,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -28,6 +33,15 @@ import type {
   ShipSafeScanResult,
   ShipSafeSeverity,
 } from '../lib/shipsafe/types';
+import type { ShipSafeAiAnalysis } from '../lib/ai/schemas/ai-response';
+
+interface ShipSafeAiResponsePayload {
+  scanId: string;
+  deterministicRiskScore: number;
+  model: string;
+  analyzedAt: string;
+  analysis: ShipSafeAiAnalysis;
+}
 
 interface StagedUploadFile {
   id: string;
@@ -78,14 +92,26 @@ function isSupportedNameClient(name: string): boolean {
 }
 
 export function ShipSafePage() {
-  const { shipSafeInitialSeverity, setShipSafeInitialSeverity, showToast } = useApp();
+  const {
+    shipSafeInitialSeverity,
+    setShipSafeInitialSeverity,
+    latestScanResult,
+    setLatestScanResult,
+    askInfraVoice,
+    showToast,
+  } = useApp();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [stagedFiles, setStagedFiles] = useState<StagedUploadFile[]>([]);
-  const [scanResult, setScanResult] = useState<ShipSafeScanResult | null>(null);
+  const [scanResult, setScanResult] = useState<ShipSafeScanResult | null>(() => latestScanResult);
   const [isScanning, setIsScanning] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+
+  const [aiAnalysis, setAiAnalysis] = useState<ShipSafeAiResponsePayload | null>(null);
+  const [isAnalyzingAi, setIsAnalyzingAi] = useState(false);
+  const [aiError, setAiError] = useState<{ message: string; retryable: boolean } | null>(null);
+  const [copiedAiSummary, setCopiedAiSummary] = useState(false);
 
   const [selectedSeverity, setSelectedSeverity] = useState<'all' | ShipSafeSeverity>(
     shipSafeInitialSeverity
@@ -172,6 +198,9 @@ export function ShipSafePage() {
   const clearAllFiles = () => {
     setStagedFiles([]);
     setScanResult(null);
+    setLatestScanResult(null);
+    setAiAnalysis(null);
+    setAiError(null);
     setScanError(null);
     setSelectedFileFilter('all');
     setExpandedFindingIds({});
@@ -185,6 +214,8 @@ export function ShipSafePage() {
     }
 
     setScanError(null);
+    setAiAnalysis(null);
+    setAiError(null);
     setIsScanning(true);
 
     try {
@@ -207,6 +238,7 @@ export function ShipSafePage() {
 
       const result = payload as ShipSafeScanResult;
       setScanResult(result);
+      setLatestScanResult(result);
       setSelectedFileFilter('all');
       // Auto-expand the first critical/high finding for immediate clarity
       const firstTop = result.findings[0];
@@ -218,6 +250,66 @@ export function ShipSafePage() {
       setScanError('Unable to reach scanner API. Verify the server is running.');
     } finally {
       setIsScanning(false);
+    }
+  };
+
+  const runAiAnalysis = async () => {
+    if (!scanResult || isAnalyzingAi) return;
+    setIsAnalyzingAi(true);
+    setAiError(null);
+
+    try {
+      const response = await fetch('/api/shipsafe/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scanResult }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok) {
+        setAiError({
+          message: payload?.error || 'Unable to generate AI analysis.',
+          retryable: Boolean(payload?.retryable ?? true),
+        });
+        return;
+      }
+
+      setAiAnalysis(payload as ShipSafeAiResponsePayload);
+      showToast('Gemini ShipSafe analysis ready');
+    } catch {
+      setAiError({
+        message: 'Unable to reach Gemini analysis endpoint. Check server connection and retry.',
+        retryable: true,
+      });
+    } finally {
+      setIsAnalyzingAi(false);
+    }
+  };
+
+  const handleCopyAiAnalysis = async () => {
+    if (!aiAnalysis) return;
+    const { analysis } = aiAnalysis;
+    const summaryText = [
+      `ShipSafe AI Analysis (Scan ${aiAnalysis.scanId}, Risk Score ${aiAnalysis.deterministicRiskScore}/100)`,
+      `Readiness: ${analysis.deploymentReadiness}`,
+      '',
+      `Executive Summary: ${analysis.executiveSummary}`,
+      '',
+      'Prioritized Remediation Plan:',
+      ...analysis.prioritizedPlan.map(
+        (item) => `- [${item.priority}] ${item.title} (${item.ruleIds.join(', ') || 'General'}): ${item.rationale}`
+      ),
+      '',
+      'Validation Steps:',
+      ...analysis.validationSteps.map((s, idx) => `${idx + 1}. ${s}`),
+    ].join('\n');
+
+    try {
+      await navigator.clipboard.writeText(summaryText);
+      setCopiedAiSummary(true);
+      window.setTimeout(() => setCopiedAiSummary(false), 1800);
+    } catch {
+      showToast('Clipboard permission unavailable');
     }
   };
 
@@ -538,14 +630,40 @@ export function ShipSafePage() {
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleExportJson}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/[0.1] text-xs font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-white/[0.05] transition-colors whitespace-nowrap cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Export JSON</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={runAiAnalysis}
+                    disabled={isAnalyzingAi}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-xs font-medium text-white transition-colors whitespace-nowrap cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>{isAnalyzingAi ? 'Analyzing with Gemini...' : 'Analyze with Gemini'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      askInfraVoice(
+                        `Review ShipSafe scan ${scanResult.scanId} (Risk Score ${scanResult.riskScore}/100, ${scanResult.totalFindings} findings). What should I fix first and why?`,
+                        { contextType: 'shipsafe', attachScan: true }
+                      )
+                    }
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/[0.1] text-xs font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-white/[0.05] transition-colors whitespace-nowrap cursor-pointer"
+                  >
+                    <MessageSquareCode className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>Ask InfraVoice</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleExportJson}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/[0.1] text-xs font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-white/[0.05] transition-colors whitespace-nowrap cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Export JSON</span>
+                  </button>
+                </div>
               </div>
 
               {/* Scanned File Summaries */}
@@ -581,6 +699,230 @@ export function ShipSafePage() {
               </div>
             </Surface>
           </div>
+
+          {/* On-Demand Gemini AI Security Analysis Panel */}
+          {(isAnalyzingAi || aiError || aiAnalysis) && (
+            <Surface className="p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-white/[0.06]">
+                <div className="flex items-center gap-2.5">
+                  <Sparkles className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <div>
+                    <h2 className="text-sm font-semibold text-slate-900 dark:text-zinc-100">
+                      ShipSafe AI — Prioritized Remediation Analysis
+                    </h2>
+                    <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                      {aiAnalysis
+                        ? `Grounded on deterministic scan ${aiAnalysis.scanId} · Model ${aiAnalysis.model}`
+                        : 'On-demand Gemini DevSecOps reasoning · Deterministic score unchanged'}
+                    </p>
+                  </div>
+                </div>
+
+                {aiAnalysis && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="px-2.5 py-1 rounded-md text-[11px] font-medium border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+                      {aiAnalysis.analysis.deploymentReadiness}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCopyAiAnalysis}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-200 dark:border-white/[0.08] text-xs text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-white/[0.04] cursor-pointer"
+                    >
+                      {copiedAiSummary ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-500" />
+                          <span>Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={runAiAnalysis}
+                      disabled={isAnalyzingAi}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-200 dark:border-white/[0.08] text-xs text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-white/[0.04] cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Re-analyze</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {isAnalyzingAi && (
+                <div className="space-y-3 animate-pulse py-2">
+                  <div className="h-4 w-2/3 rounded bg-slate-200 dark:bg-white/[0.08]" />
+                  <div className="h-3 w-full rounded bg-slate-200/70 dark:bg-white/[0.05]" />
+                  <div className="h-3 w-5/6 rounded bg-slate-200/70 dark:bg-white/[0.05]" />
+                </div>
+              )}
+
+              {aiError && !isAnalyzingAi && (
+                <div
+                  role="alert"
+                  className="p-4 rounded-lg border border-red-500/25 bg-red-500/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                >
+                  <div className="text-xs text-red-600 dark:text-red-400">
+                    <div className="font-semibold">AI Analysis Unavailable</div>
+                    <p className="mt-0.5">{aiError.message}</p>
+                  </div>
+                  {aiError.retryable && (
+                    <button
+                      type="button"
+                      onClick={runAiAnalysis}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/30 bg-white dark:bg-[#090B0E] text-xs font-medium text-red-600 dark:text-red-300 hover:bg-red-500/10 shrink-0 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Retry Analysis</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {aiAnalysis && !isAnalyzingAi && (
+                <div className="space-y-5">
+                  {/* Executive Summary */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <div className="p-3.5 rounded-lg border border-slate-200 dark:border-white/[0.06] bg-slate-50/70 dark:bg-[#090B0E] space-y-1">
+                      <div className="text-xs font-semibold text-slate-800 dark:text-zinc-200">
+                        Executive Summary
+                      </div>
+                      <p className="text-[13px] text-slate-600 dark:text-zinc-300 leading-relaxed">
+                        {aiAnalysis.analysis.executiveSummary}
+                      </p>
+                    </div>
+                    <div className="p-3.5 rounded-lg border border-slate-200 dark:border-white/[0.06] bg-slate-50/70 dark:bg-[#090B0E] space-y-1">
+                      <div className="text-xs font-semibold text-slate-800 dark:text-zinc-200">
+                        Risk Posture Assessment
+                      </div>
+                      <p className="text-[13px] text-slate-600 dark:text-zinc-300 leading-relaxed">
+                        {aiAnalysis.analysis.overallAssessment}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Prioritized Plan P0-P3 */}
+                  {aiAnalysis.analysis.prioritizedPlan.length > 0 && (
+                    <div className="space-y-2.5">
+                      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400">
+                        Prioritized Remediation Plan (P0–P3)
+                      </h3>
+                      <div className="space-y-2.5">
+                        {aiAnalysis.analysis.prioritizedPlan.map((step, idx) => (
+                          <div
+                            key={`${step.priority}-${idx}`}
+                            className="p-4 rounded-lg border border-slate-200 dark:border-white/[0.06] bg-slate-50/70 dark:bg-[#090B0E] space-y-2.5"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`px-2 py-0.5 rounded font-mono text-[11px] font-semibold ${
+                                    step.priority === 'P0'
+                                      ? 'bg-red-500/15 text-red-500'
+                                      : step.priority === 'P1'
+                                        ? 'bg-amber-500/15 text-amber-500'
+                                        : step.priority === 'P2'
+                                          ? 'bg-sky-500/15 text-sky-500'
+                                          : 'bg-zinc-500/15 text-zinc-400'
+                                  }`}
+                                >
+                                  {step.priority}
+                                </span>
+                                <span className="text-[13px] font-semibold text-slate-900 dark:text-zinc-100">
+                                  {step.title}
+                                </span>
+                              </div>
+                              {step.ruleIds.length > 0 && (
+                                <span className="text-[11px] font-mono text-slate-500 dark:text-zinc-400">
+                                  Rules: {step.ruleIds.join(', ')}
+                                </span>
+                              )}
+                            </div>
+
+                            <p className="text-xs text-slate-600 dark:text-zinc-300 leading-relaxed">
+                              {step.rationale}
+                            </p>
+
+                            <ul className="list-disc pl-4 space-y-1 text-xs text-slate-700 dark:text-zinc-300">
+                              {step.actionSteps.map((act, aIdx) => (
+                                <li key={aIdx}>{act}</li>
+                              ))}
+                            </ul>
+
+                            {step.exampleFix && (
+                              <CodeBlock
+                                code={step.exampleFix}
+                                label="Example configuration patch"
+                                tone="success"
+                              />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Finding Relationships & Insights */}
+                  {aiAnalysis.analysis.findingRelationships.length > 0 && (
+                    <div className="p-3.5 rounded-lg border border-slate-200 dark:border-white/[0.06] bg-slate-50/70 dark:bg-[#090B0E] space-y-1.5">
+                      <div className="text-xs font-semibold text-slate-800 dark:text-zinc-200">
+                        Compounding Risk Relationships
+                      </div>
+                      <ul className="list-disc pl-4 space-y-1 text-xs text-slate-600 dark:text-zinc-300">
+                        {aiAnalysis.analysis.findingRelationships.map((rel, rIdx) => (
+                          <li key={rIdx}>{rel}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Quick Wins, Long Term, Validation */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                    <div className="p-3.5 rounded-lg border border-slate-200 dark:border-white/[0.06] bg-slate-50/70 dark:bg-[#090B0E] space-y-1.5">
+                      <div className="font-semibold text-slate-800 dark:text-zinc-200">
+                        Quick Wins
+                      </div>
+                      <ul className="list-disc pl-4 space-y-1 text-slate-600 dark:text-zinc-300">
+                        {aiAnalysis.analysis.quickWins.map((qw, qIdx) => (
+                          <li key={qIdx}>{qw}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="p-3.5 rounded-lg border border-slate-200 dark:border-white/[0.06] bg-slate-50/70 dark:bg-[#090B0E] space-y-1.5">
+                      <div className="font-semibold text-slate-800 dark:text-zinc-200">
+                        Long-Term Hardening
+                      </div>
+                      <ul className="list-disc pl-4 space-y-1 text-slate-600 dark:text-zinc-300">
+                        {aiAnalysis.analysis.longTermImprovements.map((lt, lIdx) => (
+                          <li key={lIdx}>{lt}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="p-3.5 rounded-lg border border-slate-200 dark:border-white/[0.06] bg-slate-50/70 dark:bg-[#090B0E] space-y-1.5">
+                      <div className="font-semibold text-slate-800 dark:text-zinc-200">
+                        Post-Fix Validation Steps
+                      </div>
+                      <ul className="list-disc pl-4 space-y-1 text-slate-600 dark:text-zinc-300">
+                        {aiAnalysis.analysis.validationSteps.map((vs, vIdx) => (
+                          <li key={vIdx}>{vs}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+
+                  {aiAnalysis.analysis.generalNotes && (
+                    <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                      Note: {aiAnalysis.analysis.generalNotes}
+                    </p>
+                  )}
+                </div>
+              )}
+            </Surface>
+          )}
 
           {/* Filter Toolbar + Findings */}
           <Surface className="overflow-hidden">

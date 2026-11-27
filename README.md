@@ -1,72 +1,73 @@
-# InfraVoice — ShipSafe AI (Phase 1A)
+# InfraVoice — ShipSafe AI
 
 > **Talk to your infrastructure. Ship with confidence.**  
 > Hackathon Sector: Open India / Open Innovation
 
-InfraVoice — ShipSafe AI is an AI-assisted DevOps security and incident workspace designed for developers and small engineering teams to inspect deployment risks before shipping, investigate Kubernetes failures with evidence, and review safe recovery actions.
+InfraVoice — ShipSafe AI is a developer security and SRE workspace that pairs a deterministic static infrastructure scanner (**ShipSafe**) with server-side **Google Gemini** reasoning (**InfraVoice AI** & **Incident Intelligence**).
 
-## Tech Stack (Repository Foundation)
+---
 
-- **Framework:** React 19 + TypeScript + Vite
-- **Styling:** Tailwind CSS v4 (dark-first engineering palette with emerald accent)
-- **Icons:** Lucide React
-- **Typography:** Plus Jakarta Sans, DM Sans, JetBrains Mono
+## Architecture Overview
 
-*(Note: Preserved the repository's existing Vite + React + TypeScript architecture while implementing full client-side route navigation across `/`, `/shipsafe`, `/infravoice`, `/incidents`, `/history`, and `/settings`.)*
+- **Frontend:** React 19 + TypeScript + Vite + Tailwind CSS v4 (`src/`)
+- **Server:** Express API + Vite SSR/static middleware on port `3000` (`server.ts`)
+- **Phase 2 Deterministic Scanner (`src/lib/shipsafe/`):**
+  - Stateless upload & rule engine for `Dockerfile`, `Dockerfile.*`, `.dockerignore`, Kubernetes YAML, Docker Compose, Terraform (`.tf`), and GitHub Actions workflows.
+  - Produces reproducible findings, line numbers, sanitized evidence snippets, and a deterministic Risk Score (`0–100`).
+- **Phase 3 Gemini Intelligence Layer (`src/lib/ai/`):**
+  - **Model Abstraction (`ai-config.ts`, `gemini-client.ts`):** Uses `@google/genai` server-side (`gemini-4-hydrogen` default; supports either Google Cloud Vertex AI via ADC or Gemini Developer API via `GEMINI_API_KEY`).
+  - **Prompt Injection & Secret Defense (`context-sanitizer.ts`):** Redacts credential tokens/assignments, enforces history & context character budgets, and wraps untrusted configs/logs in `<untrusted_data>` blocks.
+  - **Read-Only Tool Registry (`tools/`):** Allowlisted tools (`analyze_logs`, `explain_kubernetes_resource`, `inspect_scan_findings`, `summarize_incident_evidence`, `analyze_dockerfile`, `analyze_terraform`, `get_deployment_context`, `get_pod_status`) with Zod argument validation and transparent UI traces.
+  - **Structured AI Services (`services/`):**
+    - `POST /api/infravoice/chat` — Context-aware DevOps & SRE assistant (English, Hindi, Telugu, Tamil, Kannada).
+    - `POST /api/shipsafe/analyze` — On-demand P0–P3 remediation planning grounded on deterministic ShipSafe findings.
+    - `POST /api/incidents/investigate` — Structured SRE investigation strictly separating Confirmed Evidence, Inferred Causes, and Unverified Hypotheses.
+    - `GET /api/ai/status` — Safe AI readiness metadata (never exposes secrets).
+- **Browser Voice Support (`src/lib/voice/speech-client.ts`):**
+  - Uses standard browser **Web Speech API** (`SpeechRecognition` / `webkitSpeechRecognition` + `speechSynthesis`) with editable transcription and graceful fallback when unsupported or denied.
 
-## Setup & Run Instructions
+---
+
+## Environment Setup
+
+Copy `.env.example` or configure secrets in your runtime environment (never expose keys to frontend code):
+
+```bash
+# Option A: Gemini Developer API (AI Studio Secrets)
+GEMINI_API_KEY="your-key"
+GEMINI_MODEL="gemini-4-hydrogen"
+GOOGLE_GENAI_USE_VERTEXAI="false"
+
+# Option B: Google Cloud Vertex AI (Cloud Run / GCE ADC)
+GOOGLE_GENAI_USE_VERTEXAI="true"
+GOOGLE_CLOUD_PROJECT="your-gcp-project-id"
+GOOGLE_CLOUD_LOCATION="us-central1"
+# Locally: GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
+```
+
+---
+
+## Local Run & Test Commands
 
 ```bash
 # Install dependencies
 npm install
 
-# Start development server on port 3000
+# Run development server on port 3000
 npm run dev
 
-# Type-check
-npm run lint
+# Run deterministic + mocked Gemini test suites
+npm test
 
-# Build production bundle
+# Type-check & production build
+npm run lint
 npm run build
 ```
 
-## Phase 1A — Completed Deliverables
+---
 
-1. **Application Shell (`src/components/layout/AppShell.tsx`)**
-   - Collapsible desktop sidebar + responsive mobile drawer
-   - Active workspace switcher (`payments-prod`, `upi-gateway-core`, `checkout-staging`)
-   - Interactive notifications inbox with unread counter & mark-read actions
-   - Profile footer linking to Settings
-2. **Overview Dashboard (`/`)**
-   - 4 workspace KPI cards (Deployment Risk Status, Security Findings, Recent Incidents, Infrastructure Health)
-   - SVG risk score arc gauge + 14-day trend sparkline + recent scan summary
-   - Interactive severity distribution bar linking directly to filtered ShipSafe findings
-   - Quick Actions (`Scan Configuration`, `Ask InfraVoice`, `Investigate Incident`)
-   - Filterable Recent Activity feed
-3. **ShipSafe — Deployment Security (`/shipsafe`)**
-   - Drag-and-drop & local file browser supporting `Dockerfile`, `YAML`, `Terraform (.tf)`, and `GitHub Actions (.yml)`
-   - Sample configuration presets and local static preview scanner
-   - Category tabs, severity filters, search, offending snippet & remediation code blocks with copy buttons, and `"Ask InfraVoice"` context handoff
-4. **InfraVoice — AI Assistant (`/infravoice`)**
-   - Natural language chat interface with 4 suggested diagnostic prompt cards
-   - Structured responses (summary, contributing causes, safe CLI/YAML remediation steps)
-   - Interactive Microphone Voice Preview UI state
-   - Dynamic Evidence Context panel linking cluster events, logs, and ShipSafe findings
-5. **Incident Center (`/incidents`)**
-   - Filterable incident queue by status, severity, and search
-   - Detail view with local status updates, Timeline, level-filterable Logs viewer, Root Cause analysis, and copyable Recovery Actions
-6. **Scan History (`/history`)**
-   - Sortable, filterable, searchable scan audit table with slide-over detail drawer
-7. **Settings (`/settings`)**
-   - Workspace configuration, live Dark/Light theme switcher, compact sidebar toggle, notification preferences, and Phase 2 AI/Voice placeholder controls (no API keys exposed in frontend)
-8. **Reusable Components & Centralized Mock Data**
-   - `src/components/ui/` (`Surface`, `SeverityLabel`, `CodeBlock`, `States`)
-   - `src/data/mockData.ts` & `src/types/infravoice.ts`
+## Cloud Run Deployment Notes
 
-## Intentionally Deferred to Phase 2+
-
-- Live Gemini API orchestration and streaming assistant responses
-- Real-time microphone audio capture and Speech-to-Text transcription
-- Live Kubernetes API / EKS / CloudWatch / Prometheus connectors
-- Persistent backend database storage, GitHub OAuth, and webhook alerting
-- Automated CI/CD PR checks and real-time static policy engine execution on server
+- Set `NODE_ENV=production` and `PORT=3000` (or Cloud Run injected `PORT`).
+- Prefer attaching a least-privilege IAM service account (`roles/aiplatform.user`) with `GOOGLE_GENAI_USE_VERTEXAI="true"` and `GOOGLE_CLOUD_PROJECT` so no static API key file is shipped inside the container.
+- All Gemini calls and rate limiters execute strictly on the Express server (`npm run start` runs `node server.ts`).
