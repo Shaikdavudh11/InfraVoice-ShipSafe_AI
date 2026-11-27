@@ -1,0 +1,27 @@
+# Version control & local IDE metadata
+.git
+.gitignore
+.DS_Store
+.aistudio
+
+# Dependencies & build caches (rebuilt cleanly inside Docker stages)
+node_modules
+dist
+build
+coverage
+
+# Secrets & environment files (never bake into image layers)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Logs, tests & documentation not needed inside runtime image
+*.log
+npm-debug.log*
+docs
+README.md
+**/__tests__
+**/*.test.ts
+**/*.test.tsx

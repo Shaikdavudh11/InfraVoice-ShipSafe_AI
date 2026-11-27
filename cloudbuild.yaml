@@ -1,0 +1,76 @@
+# Google Cloud Build pipeline for InfraVoice — ShipSafe AI
+# Builds the container image, pushes it to Artifact Registry, and deploys to Cloud Run.
+#
+# Prerequisites (run once — see docs/08-GOOGLE-CLOUD-DEPLOYMENT.md):
+#   1. Enable APIs: run.googleapis.com, cloudbuild.googleapis.com, artifactregistry.googleapis.com, secretmanager.googleapis.com
+#   2. Create Artifact Registry repo: infravoice-repo (Docker, region asia-south1)
+#   3. Create Secret Manager secret: GEMINI_API_KEY and grant runtime SA secretAccessor role
+#   4. Grant Cloud Build SA Cloud Run Admin + Service Account User roles
+#
+# Run:
+#   gcloud builds submit --config=cloudbuild.yaml \
+#     --substitutions=_REGION=asia-south1,_SERVICE_NAME=infravoice-shipsafe,_ALLOW_UNAUTHENTICATED=true
+
+substitutions:
+  _REGION: asia-south1
+  _REPOSITORY: infravoice-repo
+  _SERVICE_NAME: infravoice-shipsafe
+  _GEMINI_MODEL: gemini-4-hydrogen
+  _SERVICE_ACCOUNT: ''
+  _ALLOW_UNAUTHENTICATED: 'true'
+
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Build production image'
+    args:
+      - 'build'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$BUILD_ID'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:latest'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Push image to Artifact Registry'
+    args:
+      - 'push'
+      - '--all-tags'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: 'Deploy to Cloud Run'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        AUTH_FLAG="--no-allow-unauthenticated"
+        if [ "${_ALLOW_UNAUTHENTICATED}" = "true" ]; then
+          AUTH_FLAG="--allow-unauthenticated"
+        fi
+        SA_FLAG=""
+        if [ -n "${_SERVICE_ACCOUNT}" ]; then
+          SA_FLAG="--service-account=${_SERVICE_ACCOUNT}"
+        fi
+        gcloud run deploy "${_SERVICE_NAME}" \
+          --image="${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$BUILD_ID" \
+          --region="${_REGION}" \
+          --platform=managed \
+          --port=8080 \
+          --cpu=1 \
+          --memory=512Mi \
+          --timeout=60 \
+          --concurrency=40 \
+          --min-instances=0 \
+          --max-instances=1 \
+          --set-env-vars="NODE_ENV=production,GEMINI_MODEL=${_GEMINI_MODEL}" \
+          --set-secrets="GEMINI_API_KEY=GEMINI_API_KEY:latest" \
+          $${AUTH_FLAG} \
+          $${SA_FLAG}
+
+images:
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$BUILD_ID'
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

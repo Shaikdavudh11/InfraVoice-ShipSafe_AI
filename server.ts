@@ -399,9 +399,22 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`InfraVoice — ShipSafe AI server listening on port ${PORT}`);
   });
+
+  const shutdown = (signal: string) => {
+    console.log(`Received ${signal}. Closing HTTP server gracefully...`);
+    server.close(() => {
+      process.exit(0);
+    });
+    setTimeout(() => {
+      process.exit(1);
+    }, 10_000).unref();
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 // Only start HTTP listener when executed directly (not when imported in tests)

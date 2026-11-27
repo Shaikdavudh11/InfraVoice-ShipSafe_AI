@@ -18,6 +18,8 @@ Full documentation is split into dedicated guides under `docs/`:
 5. **[REST API Reference](./docs/05-API-REFERENCE.md)** — All `/api/*` endpoints, payloads, status codes, rate limits, and `curl` examples.
 6. **[Security, Guardrails & Safety Boundaries](./docs/06-SECURITY-AND-SAFETY.md)** — Secret redaction, upload limits, prompt-injection defenses, approval gates, and sandbox isolation.
 7. **[Testing Guide & Live Demo Runbook](./docs/07-TESTING-AND-DEMO-RUNBOOK.md)** — Automated test commands, pre-demo checklist, and 3–5 minute presentation script.
+8. **[Google Cloud Deployment Guide](./docs/08-GOOGLE-CLOUD-DEPLOYMENT.md)** — Step-by-step Cloud Run, Cloud Build, Artifact Registry, Secret Manager, and IAM deployment instructions.
+9. **[Future Multi-Platform Deployment Guide](./docs/09-FUTURE-OTHER-PLATFORMS-DEPLOYMENT.md)** — Future reference for deploying the Docker container to Render, Railway, Fly.io, AWS, Azure, DigitalOcean, or a self-hosted VPS.
 
 ---
 
