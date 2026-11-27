@@ -7,6 +7,20 @@ InfraVoice — ShipSafe AI is a developer security and SRE workspace uniting a d
 
 ---
 
+## Documentation Index
+
+Full documentation is split into dedicated guides under `docs/`:
+
+1. **[Setup & Installation Guide](./docs/01-GETTING-STARTED-SETUP.md)** — Prerequisites, environment variables, starting the server, and troubleshooting.
+2. **[Step-by-Step User Guide & Workflows](./docs/02-USER-GUIDE-WORKFLOW.md)** — How the app works and click-by-click instructions for every page.
+3. **[Features & Capabilities Guide](./docs/03-FEATURES-AND-CAPABILITIES.md)** — Real vs simulated breakdown, ShipSafe rules, AI tools, voice languages, and simulation scenarios.
+4. **[Architecture & Codebase Map](./docs/04-ARCHITECTURE-AND-CODEBASE.md)** — System architecture diagram, folder structure, and shared state flow.
+5. **[REST API Reference](./docs/05-API-REFERENCE.md)** — All `/api/*` endpoints, payloads, status codes, rate limits, and `curl` examples.
+6. **[Security, Guardrails & Safety Boundaries](./docs/06-SECURITY-AND-SAFETY.md)** — Secret redaction, upload limits, prompt-injection defenses, approval gates, and sandbox isolation.
+7. **[Testing Guide & Live Demo Runbook](./docs/07-TESTING-AND-DEMO-RUNBOOK.md)** — Automated test commands, pre-demo checklist, and 3–5 minute presentation script.
+
+---
+
 ## Architecture Overview
 
 - **Frontend:** React 19 + TypeScript + Vite + Tailwind CSS v4 (`src/`)
