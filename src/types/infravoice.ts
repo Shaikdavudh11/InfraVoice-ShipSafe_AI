@@ -6,7 +6,7 @@ export type AppRoute =
   | '/history'
   | '/settings';
 
-export type Severity = 'critical' | 'high' | 'medium' | 'low';
+export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
 export type RiskCategory =
   | 'container'

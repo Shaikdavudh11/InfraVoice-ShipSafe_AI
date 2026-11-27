@@ -33,6 +33,11 @@ const SEVERITY_CONFIG: Record<
     colorClass: 'text-emerald-600 dark:text-emerald-400',
     Icon: CheckCircle2,
   },
+  info: {
+    label: 'Info',
+    colorClass: 'text-slate-600 dark:text-zinc-400',
+    Icon: Info,
+  },
 };
 
 export function SeverityLabel({ severity }: { severity: Severity }) {
